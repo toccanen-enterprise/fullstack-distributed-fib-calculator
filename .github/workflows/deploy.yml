@@ -1,0 +1,53 @@
+name: Deploy to AWS Elastic Beanstalk
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionRole-FibCalculator
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build & Push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $ECR_REGISTRY/fib-client ./client
+          docker build -t $ECR_REGISTRY/fib-api ./server
+          docker build -t $ECR_REGISTRY/fib-worker ./worker
+          docker build -t $ECR_REGISTRY/fib-nginx ./nginx
+          
+          docker push $ECR_REGISTRY/fib-client
+          docker push $ECR_REGISTRY/fib-api
+          docker push $ECR_REGISTRY/fib-worker
+          docker push $ECR_REGISTRY/fib-nginx
+
+      - name: Create Deploy Package
+        run: |
+          export ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          envsubst < docker-compose.prod.yml > docker-compose-deploy.yml
+          zip -r deploy.zip docker-compose-deploy.yml
+
+      - name: Beanstalk Deploy
+        uses: einaregilsson/beanstalk-deploy@v21
+        with:
+          application_name: fib-calculator
+          environment_name: Fibcalculator-env
+          version_label: "v-${{ github.sha }}"
+          region: ${{ secrets.AWS_REGION }}
+          deployment_package: deploy.zip

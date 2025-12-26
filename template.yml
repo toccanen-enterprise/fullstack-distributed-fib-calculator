@@ -16,7 +16,7 @@ Parameters:
   GitHubRepo:
     Type: String
     Description: Your GitHub repo in format 'username/repo-name'
-    Default: YOUR_USERNAME/YOUR_REPO
+    Default: toccanen-enterprise/fullstack-distributed-fib-calculator
 
 Resources:
   # -------------------------------------------------------------------------
