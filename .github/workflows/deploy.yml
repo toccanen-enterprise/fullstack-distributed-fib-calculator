@@ -38,10 +38,13 @@ jobs:
           docker push $ECR_REGISTRY/fib-nginx
 
       - name: Create Deploy Package
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          export ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
-          envsubst < docker-compose.prod.yml > docker-compose-deploy.yml
-          zip -r deploy.zip docker-compose-deploy.yml
+          # The output filename MUST be docker-compose.yml
+          envsubst < docker-compose.prod.yml > docker-compose.yml
+          # Zip only the generated docker-compose.yml
+          zip -r deploy.zip docker-compose.yml
 
       - name: Beanstalk Deploy
         uses: einaregilsson/beanstalk-deploy@v21
