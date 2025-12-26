@@ -5,9 +5,7 @@ services:
     ports:
       - "80:80"
     restart: always
-    depends_on:
-      - api
-      - client
+    depends_on: [api, client]
 
   client:
     image: ${ECR_REGISTRY}/fib-client:${IMAGE_TAG}
@@ -25,10 +23,12 @@ services:
       - PGPASSWORD=${PGPASSWORD}
       - PGDATABASE=${PGDATABASE}
       - PORT=8080
-
+      - NODE_ENV=production
+  
   worker:
     image: ${ECR_REGISTRY}/fib-worker:${IMAGE_TAG}
     restart: always
     environment:
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
+      - NODE_ENV=production
