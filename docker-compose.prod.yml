@@ -1,0 +1,34 @@
+version: '3.8'
+services:
+  nginx:
+    image: ${ECR_REGISTRY}/fib-nginx:latest
+    ports:
+      - "80:80"
+    restart: always
+    depends_on:
+      - api
+      - client
+
+  client:
+    image: ${ECR_REGISTRY}/fib-client:latest
+    restart: always
+
+  api:
+    image: ${ECR_REGISTRY}/fib-api:latest
+    restart: always
+    environment:
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - PGHOST=${PGHOST}
+      - PGPORT=${PGPORT}
+      - PGUSER=${PGUSER}
+      - PGPASSWORD=${PGPASSWORD}
+      - PGDATABASE=${PGDATABASE}
+      - PORT=8080
+
+  worker:
+    image: ${ECR_REGISTRY}/fib-worker:latest
+    restart: always
+    environment:
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}

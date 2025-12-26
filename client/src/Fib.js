@@ -7,19 +7,25 @@ class Fib extends Component {
     values: {},
     index: '',
   };
+  fetchValuesIntervalId = null;
+  fetchIndexesIntervalId = null;
 
-  componentDidUpdate() {
-    this.fetchValues();
-    this.fetchIndexes();
-  }
   componentDidMount() {
     this.fetchValues();
     this.fetchIndexes();
+  }
+  componentWillUnmount() {
+    clearInterval(this.fetchIndexesIntervalId);
+    clearInterval(this.fetchValuesIntervalId);
   }
 
   async fetchValues() {
     const values = await axios.get('/api/values/current');
     this.setState({ values: values.data });
+    this.fetchValuesIntervalId = setInterval(async () => {
+      const values = await axios.get('/api/values/current');
+      this.setState({ values: values.data });
+    }, 5000);
   }
 
   async fetchIndexes() {
@@ -27,6 +33,12 @@ class Fib extends Component {
     this.setState({
       seenIndexes: seenIndexes.data,
     });
+    this.fetchIndexesIntervalId = setInterval(async () => {
+      const seenIndexes = await axios.get('/api/values/all');
+      this.setState({
+        seenIndexes: seenIndexes.data,
+      });
+    }, 5000);
   }
 
   handleSubmit = async (event) => {
@@ -35,7 +47,11 @@ class Fib extends Component {
     await axios.post('/api/values', {
       index: this.state.index,
     });
-    this.setState({ index: '' });
+    this.setState(prev => ({ 
+      ...prev, 
+      index: '', 
+      seenIndexes: [...prev.seenIndexes, {number: prev.index}] 
+    }));
   };
 
   renderSeenIndexes() {

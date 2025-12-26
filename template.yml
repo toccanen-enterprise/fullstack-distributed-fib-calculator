@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Full Stack Fib Calculator: ECR, OIDC, RDS, Redis, and VPC-Aware
+  Elastic Beanstalk'
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair for SSH access
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of your Default VPC (e.g., vpc-xxxx)
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of at least two Subnet IDs from your Default VPC (e.g.,
+      subnet-xxx,subnet-yyy)
+  GitHubRepo:
+    Type: String
+    Description: Your GitHub repo in format 'username/repo-name'
+    Default: YOUR_USERNAME/YOUR_REPO
+
+Resources:
+  # -------------------------------------------------------------------------
+  # 1. ECR Repositories
+  # -------------------------------------------------------------------------
+  RepoClient:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: fib-client
+  RepoApi:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: fib-api
+  RepoWorker:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: fib-worker
+  RepoNginx:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: fib-nginx
+
+  # -------------------------------------------------------------------------
+  # 2. OIDC Provider & Role for GitHub Actions
+  # -------------------------------------------------------------------------
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GitHubActionRole-FibCalculator
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Condition:
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:*
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+        - arn:aws:iam::aws:policy/AdministratorAccess-AWSElasticBeanstalk
+
+  # -------------------------------------------------------------------------
+  # 3. Database Secret (Secrets Manager)
+  # -------------------------------------------------------------------------
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    Properties:
+      Name: fib-db-secret
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "postgres"}'
+        GenerateStringKey: password
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\ '
+
+  # -------------------------------------------------------------------------
+  # 4. Security Groups (VPC-Aware)
+  # -------------------------------------------------------------------------
+  InstanceSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EB Instance Security Group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  DataSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow App to Access RDS/Redis
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !GetAtt InstanceSG.GroupId
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !GetAtt InstanceSG.GroupId
+
+  # -------------------------------------------------------------------------
+  # 5. Postgres RDS
+  # -------------------------------------------------------------------------
+  PostgresDB:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: DBSecret
+    Properties:
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      MasterUsername: postgres
+      MasterUserPassword: '{{resolve:secretsmanager:fib-db-secret:SecretString:password}}'
+      DBName: fibvalues
+      VPCSecurityGroups:
+        - !GetAtt DataSG.GroupId
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 1
+      AutoMinorVersionUpgrade: true
+
+  # -------------------------------------------------------------------------
+  # 6. Redis ElastiCache
+  # -------------------------------------------------------------------------
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: redis
+      CacheNodeType: cache.t3.micro
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !GetAtt DataSG.GroupId
+
+  # -------------------------------------------------------------------------
+  # 7. Elastic Beanstalk
+  # -------------------------------------------------------------------------
+  EBApp:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: fib-calculator
+
+  EBEnv:
+    Type: AWS::ElasticBeanstalk::Environment
+    DependsOn:
+      - DBSecret
+    Properties:
+      ApplicationName: !Ref EBApp
+      EnvironmentName: Fibcalculator-env
+      SolutionStackName: 64bit Amazon Linux 2023 v4.9.0 running Docker
+      OptionSettings:
+        # VPC Settings
+        - Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: !Ref VpcId
+        - Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value: !Join
+            - ','
+            - !Ref Subnets
+        - Namespace: aws:ec2:vpc
+          OptionName: ELBSubnets
+          Value: !Join
+            - ','
+            - !Ref Subnets
+        # Instance Settings
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !Ref EBInstanceProfile
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !GetAtt InstanceSG.GroupId
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: EC2KeyName
+          Value: !Ref KeyName
+        # Environment Variables
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: PGHOST
+          Value: !GetAtt PostgresDB.Endpoint.Address
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: PGPASSWORD
+          Value: '{{resolve:secretsmanager:fib-db-secret:SecretString:password}}'
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REDIS_HOST
+          Value: !GetAtt RedisCluster.RedisEndpoint.Address
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: PGPORT
+          Value: '5432'
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: PGUSER
+          Value: postgres
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: PGDATABASE
+          Value: fibvalues
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REDIS_PORT
+          Value: '6379'
+
+  # -------------------------------------------------------------------------
+  # 8. IAM Roles for EB Instances
+  # -------------------------------------------------------------------------
+  EBInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  EBInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EBInstanceRole
