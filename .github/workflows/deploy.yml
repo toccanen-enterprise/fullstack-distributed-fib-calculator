@@ -40,10 +40,10 @@ jobs:
       - name: Create Deploy Package
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # The output filename MUST be docker-compose.yml
-          envsubst < docker-compose.prod.yml > docker-compose.yml
-          # Zip only the generated docker-compose.yml
+          # We tell envsubst to ONLY replace these two specific variables
+          envsubst '$ECR_REGISTRY $IMAGE_TAG' < docker-compose.prod.yml > docker-compose.yml
           zip -r deploy.zip docker-compose.yml
 
       - name: Beanstalk Deploy

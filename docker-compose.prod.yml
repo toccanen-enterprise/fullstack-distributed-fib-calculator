@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   nginx:
-    image: ${ECR_REGISTRY}/fib-nginx:latest
+    image: ${ECR_REGISTRY}/fib-nginx:${IMAGE_TAG}
     ports:
       - "80:80"
     restart: always
@@ -10,11 +10,11 @@ services:
       - client
 
   client:
-    image: ${ECR_REGISTRY}/fib-client:latest
+    image: ${ECR_REGISTRY}/fib-client:${IMAGE_TAG}
     restart: always
 
   api:
-    image: ${ECR_REGISTRY}/fib-api:latest
+    image: ${ECR_REGISTRY}/fib-api:${IMAGE_TAG}
     restart: always
     environment:
       - REDIS_HOST=${REDIS_HOST}
@@ -27,7 +27,7 @@ services:
       - PORT=8080
 
   worker:
-    image: ${ECR_REGISTRY}/fib-worker:latest
+    image: ${ECR_REGISTRY}/fib-worker:${IMAGE_TAG}
     restart: always
     environment:
       - REDIS_HOST=${REDIS_HOST}

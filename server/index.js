@@ -71,6 +71,8 @@ app.post('/values', async (req, res) => {
   res.send({ working: true });
 });
 
-app.listen(8080, (err) => {
+const port = process.env.PORT || 8080; 
+
+app.listen(port, (err) => {
   console.log('Listening');
 });
